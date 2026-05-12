@@ -1,0 +1,5 @@
+_lookup_test/
+*.zip
+*.log
+mod-url-cache.json
+Thumbs.db
