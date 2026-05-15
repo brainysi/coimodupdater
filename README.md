@@ -2,7 +2,7 @@
 
 `COI Mod Updater` is a Windows PowerShell utility for checking installed Captain of Industry mods against the COI Hub and updating them when newer versions are available.
 
-It scans installed mods, compares manifest versions, downloads updated packages, keeps a URL cache for faster future runs, creates backups before replacement, and installs validated updates into your game mod folder.
+It scans installed mods, compares manifest versions, downloads updated packages, keeps a URL cache for faster future runs, creates backups before merge, and merges validated updates into your game mod folder.
 
 ## Features
 
@@ -12,7 +12,9 @@ It scans installed mods, compares manifest versions, downloads updated packages,
 - Downloads archives into `%APPDATA%\Captain of Industry\Mods_dl`
 - Keeps a mod id to hub URL/download URL cache in `Mods_dl`
 - Extracts and validates downloaded mod packages before install
-- Backs up replaced mod folders into `%APPDATA%\Captain of Industry\Bkup`
+- Backs up installed mod folders into `%APPDATA%\Captain of Industry\Bkup` before merge
+- Merges updates in place instead of deleting and replacing the installed mod folder
+- Preserves existing `.txt` and `.json` files during update, except `manifest.json`
 - Supports `-WhatIf` for dry runs
 - Supports `-ModId <id>` for targeted updates
 
@@ -66,7 +68,8 @@ powershell -ExecutionPolicy Bypass -File ".\Update-CoIMods.ps1" -Verbose
 5. Downloads the update ZIP to `Mods_dl`.
 6. Extracts and validates the package by inspecting its `manifest.json`.
 7. Backs up the existing installed mod.
-8. Replaces the installed mod with the validated updated package.
+8. Merges the validated update into the installed mod folder in place.
+9. Preserves existing `.txt` and `.json` files, except `manifest.json`, which is always updated.
 
 ## Notes
 
@@ -78,7 +81,7 @@ powershell -ExecutionPolicy Bypass -File ".\Update-CoIMods.ps1" -Verbose
 
 This tool is provided as-is, without warranty of any kind, express or implied. Use it at your own risk.
 
-Although the tool creates backups before replacing installed mods, you are responsible for verifying that backups work for your setup and for reviewing any updates before using them in your game environment.
+Although the tool creates backups before merging updates into installed mods, you are responsible for verifying that backups work for your setup and for reviewing any updates before using them in your game environment.
 
 This project is not affiliated with, endorsed by, or sponsored by Mafi Games.
 

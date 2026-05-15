@@ -667,6 +667,85 @@ function Get-ValidatedExtractedMod {
     throw "Downloaded archive did not contain a manifest.json with id '$ExpectedModId'."
 }
 
+function Merge-ModFiles {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationRoot
+    )
+
+    $stats = [ordered]@{
+        CreatedDirectories     = 0
+        OverwrittenFiles       = 0
+        CopiedNewFiles         = 0
+        SkippedProtectedFiles  = 0
+        CopiedNewProtectedFiles = 0
+        ReplacedManifest       = 0
+    }
+
+    $createdDirectories = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $sourceFiles = @(Get-ChildItem -LiteralPath $SourceRoot -File -Recurse)
+
+    foreach ($sourceFile in $sourceFiles) {
+        $relativePath = $sourceFile.FullName.Substring($SourceRoot.Length).TrimStart('\', '/')
+        $destinationPath = Join-Path $DestinationRoot $relativePath
+        $destinationDirectory = Split-Path -Parent $destinationPath
+        $destinationExists = Test-Path -LiteralPath $destinationPath
+        $extension = [System.IO.Path]::GetExtension($sourceFile.Name).ToLowerInvariant()
+        $isManifest = $sourceFile.Name -ieq 'manifest.json'
+        $isProtected = ($extension -eq '.txt' -or $extension -eq '.json') -and -not $isManifest
+
+        if (-not (Test-Path -LiteralPath $destinationDirectory)) {
+            if ($PSCmdlet.ShouldProcess($destinationDirectory, 'Create destination directory for in-place merge')) {
+                New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+            }
+
+            if ($createdDirectories.Add($destinationDirectory)) {
+                $stats.CreatedDirectories += 1
+            }
+        }
+
+        if ($isManifest) {
+            if ($PSCmdlet.ShouldProcess($destinationPath, "Replace manifest.json from $($sourceFile.FullName)")) {
+                Copy-Item -LiteralPath $sourceFile.FullName -Destination $destinationPath -Force
+            }
+
+            $stats.ReplacedManifest += 1
+            continue
+        }
+
+        if ($isProtected) {
+            if ($destinationExists) {
+                Write-Log -Message ("Preserving protected file during in-place merge: {0}" -f $destinationPath)
+                $stats.SkippedProtectedFiles += 1
+                continue
+            }
+
+            if ($PSCmdlet.ShouldProcess($destinationPath, "Copy new protected file from $($sourceFile.FullName)")) {
+                Copy-Item -LiteralPath $sourceFile.FullName -Destination $destinationPath -Force
+            }
+
+            $stats.CopiedNewProtectedFiles += 1
+            continue
+        }
+
+        if ($PSCmdlet.ShouldProcess($destinationPath, "Merge file from $($sourceFile.FullName)")) {
+            Copy-Item -LiteralPath $sourceFile.FullName -Destination $destinationPath -Force
+        }
+
+        if ($destinationExists) {
+            $stats.OverwrittenFiles += 1
+        }
+        else {
+            $stats.CopiedNewFiles += 1
+        }
+    }
+
+    return [pscustomobject]$stats
+}
+
 function Backup-AndInstallMod {
     param(
         [Parameter(Mandatory = $true)]
@@ -678,24 +757,16 @@ function Backup-AndInstallMod {
 
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $backupPath = Join-Path (Join-Path $script:BackupRoot $timestamp) $InstalledMod.DirectoryName
-    $targetInstallPath = Join-Path $script:ModsRoot $ExtractedMod.ModFolderName
+    $targetInstallPath = $InstalledMod.Directory
 
     if ($PSCmdlet.ShouldProcess($InstalledMod.Directory, "Back up installed mod to $backupPath")) {
         New-Item -ItemType Directory -Path (Split-Path -Parent $backupPath) -Force | Out-Null
         Copy-Item -LiteralPath $InstalledMod.Directory -Destination $backupPath -Recurse -Force
     }
 
-    if ($PSCmdlet.ShouldProcess($InstalledMod.Directory, 'Remove existing installed mod directory')) {
-        Remove-Item -LiteralPath $InstalledMod.Directory -Recurse -Force
-    }
-
-    if ($InstalledMod.Directory -ne $targetInstallPath -and (Test-Path -LiteralPath $targetInstallPath)) {
-        throw "Target install directory already exists: $targetInstallPath"
-    }
-
-    if ($PSCmdlet.ShouldProcess($targetInstallPath, "Install updated mod from $($ExtractedMod.ModFolderPath)")) {
-        Copy-Item -LiteralPath $ExtractedMod.ModFolderPath -Destination $targetInstallPath -Recurse -Force
-    }
+    Write-Log -Message ("Applying in-place merge install for '{0}' from '{1}' into '{2}'." -f $InstalledMod.Id, $ExtractedMod.ModFolderPath, $targetInstallPath)
+    $mergeStats = Merge-ModFiles -SourceRoot $ExtractedMod.ModFolderPath -DestinationRoot $targetInstallPath
+    Write-Log -Message ("In-place merge complete for '{0}': overwritten={1}, new={2}, skipped_protected={3}, new_protected={4}, manifest_replaced={5}, dirs_created={6}" -f $InstalledMod.Id, $mergeStats.OverwrittenFiles, $mergeStats.CopiedNewFiles, $mergeStats.SkippedProtectedFiles, $mergeStats.CopiedNewProtectedFiles, $mergeStats.ReplacedManifest, $mergeStats.CreatedDirectories)
 
     return $targetInstallPath
 }
