@@ -46,6 +46,46 @@ function Ensure-Directory {
     }
 }
 
+function ConvertTo-HashtableRecursive {
+    param(
+        [Parameter(Mandatory = $true)]
+        $InputObject
+    )
+
+    if ($null -eq $InputObject) {
+        return $null
+    }
+
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        $table = @{}
+        foreach ($key in $InputObject.Keys) {
+            $table[$key] = ConvertTo-HashtableRecursive -InputObject $InputObject[$key]
+        }
+
+        return $table
+    }
+
+    if (($InputObject -is [System.Collections.IEnumerable]) -and -not ($InputObject -is [string])) {
+        $items = @()
+        foreach ($item in $InputObject) {
+            $items += ,(ConvertTo-HashtableRecursive -InputObject $item)
+        }
+
+        return $items
+    }
+
+    if ($InputObject -is [pscustomobject]) {
+        $table = @{}
+        foreach ($property in $InputObject.PSObject.Properties) {
+            $table[$property.Name] = ConvertTo-HashtableRecursive -InputObject $property.Value
+        }
+
+        return $table
+    }
+
+    return $InputObject
+}
+
 function Get-Cache {
     if (-not (Test-Path -LiteralPath $script:CachePath)) {
         return @{}
@@ -57,12 +97,12 @@ function Get-Cache {
             return @{}
         }
 
-        $parsed = $raw | ConvertFrom-Json -Depth 10 -AsHashtable
+        $parsed = $raw | ConvertFrom-Json
         if ($null -eq $parsed) {
             return @{}
         }
 
-        return $parsed
+        return (ConvertTo-HashtableRecursive -InputObject $parsed)
     }
     catch {
         Write-Log -Level 'WARN' -Message ("Cache file could not be read, starting fresh: {0}" -f $_.Exception.Message)
@@ -677,12 +717,13 @@ function Merge-ModFiles {
     )
 
     $stats = [ordered]@{
-        CreatedDirectories     = 0
-        OverwrittenFiles       = 0
-        CopiedNewFiles         = 0
-        SkippedProtectedFiles  = 0
+        CreatedDirectories      = 0
+        OverwrittenFiles        = 0
+        CopiedNewFiles          = 0
+        SkippedProtectedFiles   = 0
         CopiedNewProtectedFiles = 0
-        ReplacedManifest       = 0
+        DocExceptionOverwrites  = 0
+        ReplacedManifest        = 0
     }
 
     $createdDirectories = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -693,9 +734,17 @@ function Merge-ModFiles {
         $destinationPath = Join-Path $DestinationRoot $relativePath
         $destinationDirectory = Split-Path -Parent $destinationPath
         $destinationExists = Test-Path -LiteralPath $destinationPath
-        $extension = [System.IO.Path]::GetExtension($sourceFile.Name).ToLowerInvariant()
+        $fileName = $sourceFile.Name
+        $relativePathParts = @($relativePath -split '[\\/]')
+        $extension = [System.IO.Path]::GetExtension($fileName).ToLowerInvariant()
         $isManifest = $sourceFile.Name -ieq 'manifest.json'
-        $isProtected = ($extension -eq '.txt' -or $extension -eq '.json') -and -not $isManifest
+        $isJson = $extension -eq '.json'
+        $isText = $extension -eq '.txt'
+        $isNoExtension = [string]::IsNullOrWhiteSpace($extension)
+        $isTranslationsException = ($relativePathParts | Where-Object { $_ -match '(?i)translations' } | Select-Object -First 1) -ne $null
+        $isDocExceptionName = ($relativePathParts | Where-Object { $_ -match '(?i)(readme|changelog|license|credits)' } | Select-Object -First 1) -ne $null
+        $isDocException = ($isTranslationsException -and ($isJson -or $isText -or $isNoExtension)) -or ($isDocExceptionName -and -not $isJson -and ($isText -or $isNoExtension))
+        $isProtected = ($isText -or $isJson) -and -not $isManifest -and -not $isDocException
 
         if (-not (Test-Path -LiteralPath $destinationDirectory)) {
             if ($PSCmdlet.ShouldProcess($destinationDirectory, 'Create destination directory for in-place merge')) {
@@ -713,6 +762,17 @@ function Merge-ModFiles {
             }
 
             $stats.ReplacedManifest += 1
+            continue
+        }
+
+        if ($isDocException -and $destinationExists) {
+            Write-Log -Message ("Overwriting doc exception file during in-place merge: {0}" -f $destinationPath)
+
+            if ($PSCmdlet.ShouldProcess($destinationPath, "Overwrite doc exception file from $($sourceFile.FullName)")) {
+                Copy-Item -LiteralPath $sourceFile.FullName -Destination $destinationPath -Force
+            }
+
+            $stats.DocExceptionOverwrites += 1
             continue
         }
 
@@ -766,7 +826,7 @@ function Backup-AndInstallMod {
 
     Write-Log -Message ("Applying in-place merge install for '{0}' from '{1}' into '{2}'." -f $InstalledMod.Id, $ExtractedMod.ModFolderPath, $targetInstallPath)
     $mergeStats = Merge-ModFiles -SourceRoot $ExtractedMod.ModFolderPath -DestinationRoot $targetInstallPath
-    Write-Log -Message ("In-place merge complete for '{0}': overwritten={1}, new={2}, skipped_protected={3}, new_protected={4}, manifest_replaced={5}, dirs_created={6}" -f $InstalledMod.Id, $mergeStats.OverwrittenFiles, $mergeStats.CopiedNewFiles, $mergeStats.SkippedProtectedFiles, $mergeStats.CopiedNewProtectedFiles, $mergeStats.ReplacedManifest, $mergeStats.CreatedDirectories)
+    Write-Log -Message ("In-place merge complete for '{0}': overwritten={1}, new={2}, skipped_protected={3}, new_protected={4}, doc_exception_overwrites={5}, manifest_replaced={6}, dirs_created={7}" -f $InstalledMod.Id, $mergeStats.OverwrittenFiles, $mergeStats.CopiedNewFiles, $mergeStats.SkippedProtectedFiles, $mergeStats.CopiedNewProtectedFiles, $mergeStats.DocExceptionOverwrites, $mergeStats.ReplacedManifest, $mergeStats.CreatedDirectories)
 
     return $targetInstallPath
 }

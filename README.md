@@ -15,6 +15,9 @@ It scans installed mods, compares manifest versions, downloads updated packages,
 - Backs up installed mod folders into `%APPDATA%\Captain of Industry\Bkup` before merge
 - Merges updates in place instead of deleting and replacing the installed mod folder
 - Preserves existing `.txt` and `.json` files during update, except `manifest.json`
+- Overwrites documentation-style files whose paths contain `readme`, `changelog`, `license`, or `credits` for `.txt` and no-extension files
+- Overwrites translation files whose paths contain `translations` for `.txt`, `.json`, and no-extension files
+- Keeps other JSON files protected, except for `manifest.json`
 - Supports `-WhatIf` for dry runs
 - Supports `-ModId <id>` for targeted updates
 
@@ -70,6 +73,7 @@ powershell -ExecutionPolicy Bypass -File ".\Update-CoIMods.ps1" -Verbose
 7. Backs up the existing installed mod.
 8. Merges the validated update into the installed mod folder in place.
 9. Preserves existing `.txt` and `.json` files, except `manifest.json`, which is always updated.
+10. Overwrites doc-style files with paths containing `readme`, `changelog`, `license`, or `credits` for `.txt` and no-extension files, and overwrites translation `.txt`, `.json`, and no-extension files under paths containing `translations`.
 
 ## Notes
 
